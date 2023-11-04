@@ -1,0 +1,59 @@
+# Run the classicmodels.sql file in a new db. The classicmodels db file exists in project root.
+
+# Let us create a trigger that prevents an orderdetail from being created if the quantity ordered is greater than the quantity in stock.
+
+# First we change the delimiter to // so that we can use ; in the trigger
+DELIMITER //
+
+# Then we create the trigger
+CREATE TRIGGER IF NOT EXISTS TRG_BEFORE_UPDATE_ON_ORDERDETAILS
+BEFORE INSERT ON orderdetails FOR EACH ROW
+BEGIN
+    DECLARE stock INT;
+    DECLARE errorMessage VARCHAR(255);
+    
+    # We need to declare an exit handler to handle the error
+    DECLARE EXIT HANDLER FOR SQLSTATE '45000'
+    BEGIN
+        RESIGNAL SET MESSAGE_TEXT = errorMessage;
+    END;
+
+    # we need to get the current quantity in stock.
+    SELECT quantityInStock INTO stock FROM products WHERE productCode = NEW.productCode;
+
+    # We need to set the error message
+    SET errorMessage = CONCAT('Quantity ordered cannot be greater than quantity in stock: ', NEW.quantityOrdered, ' > ', stock);
+
+    # We need to check if the quantity ordered is greater than the quantity in stock
+    IF NEW.quantityOrdered > stock THEN
+        SIGNAL SQLSTATE '45000';
+    END IF;
+END//
+
+# Then we change the delimiter back to ;
+DELIMITER ;
+
+# Now lets create a check constraint on orderdetails that ensures that the quantityOrdered is greater than 0
+ALTER TABLE orderdetails ADD CONSTRAINT CHK_ORDERDETAILS_QUANTITYORDERED CHECK (quantityOrdered > 0);
+
+
+
+# Now lets create a transaction to test the above items:
+SET autocommit = 0;
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+START TRANSACTION;
+
+## Try and create an order detail correctly. Both the trigger and check constraint will allow this.
+INSERT INTO orderdetails (orderNumber, productCode, quantityOrdered, priceEach, orderLineNumber) VALUES (10101, 'S18_1749', 300, 136.00, 3);
+
+## Here is an erroneous operation that tries to insert an orderdetail with a quantityOrdered greater than the quantityInStock. This will be prevented by the trigger.
+# INSERT INTO orderdetails (orderNumber, productCode, quantityOrdered, priceEach, orderLineNumber) VALUES (10101, 'S18_1749', 3000, 136.00, 3);
+
+## Here is another erroneous operation that tries to insert an orderdetail with a quantityOrdered less than 0. This will be prevented by the check constraint.
+# INSERT INTO orderdetails (orderNumber, productCode, quantityOrdered, priceEach, orderLineNumber) VALUES (10101, 'S18_1749', -20, 136.00, 3);
+
+## Both of the above erroneous operations are commented out because they will throw an error and the transaction will be rolled back.
+## To see them in action, uncomment them.
+
+COMMIT;
+SET autocommit = 1;
